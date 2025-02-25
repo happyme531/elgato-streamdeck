@@ -46,7 +46,13 @@ pub const PID_AJAZZ_AKP153R: u16 = 0x1020;
 /// Product ID of Ajazz AKP03R Desk Controller
 pub const PID_AJAZZ_AKP03R: u16 = 0x1003;
 
-const RECOGNIZED_VENDORS: [u16; 3] = [ELGATO_VENDOR_ID, AJAZZ_VENDOR_ID_1, AJAZZ_VENDOR_ID_2];
+/// Vendor ID of Mirabox M18 Desk Controller
+pub const MIRABOX_VENDOR_ID_2: u16 = 0x6603;
+
+/// Product ID of Mirabox M18 Desk Controller
+pub const PID_MIRABOX_M18: u16 = 0x1009;
+
+const RECOGNIZED_VENDORS: [u16; 4] = [ELGATO_VENDOR_ID, AJAZZ_VENDOR_ID_1, AJAZZ_VENDOR_ID_2, MIRABOX_VENDOR_ID_2];
 
 /// Returns true for vendors IDs that are recognized by the library
 pub fn is_vendor_familiar(vendor: &u16) -> bool {
@@ -88,6 +94,8 @@ pub enum Kind {
     Akp03R,
     /// MiraBox HSV293S
     MiraBoxHSV293S,
+    /// MiraBox M18
+    MiraBoxM18,
 }
 
 impl Kind {
@@ -118,6 +126,11 @@ impl Kind {
                 _ => None,
             },
 
+            MIRABOX_VENDOR_ID_2 => match pid {
+                PID_MIRABOX_M18 => Some(Kind::MiraBoxM18),
+                _ => None,
+            },
+
             _ => None,
         }
     }
@@ -141,6 +154,7 @@ impl Kind {
             Kind::Akp153R => PID_AJAZZ_AKP153R,
             Kind::Akp03R => PID_AJAZZ_AKP03R,
             Kind::MiraBoxHSV293S => PID_MIRABOX_HSV293S,
+            Kind::MiraBoxM18 => PID_MIRABOX_M18,
         }
     }
 
@@ -163,6 +177,7 @@ impl Kind {
             Kind::Akp153R => AJAZZ_VENDOR_ID_2,
             Kind::Akp03R => AJAZZ_VENDOR_ID_2,
             Kind::MiraBoxHSV293S => AJAZZ_VENDOR_ID_1,
+            Kind::MiraBoxM18 => MIRABOX_VENDOR_ID_2,
         }
     }
 
@@ -177,6 +192,7 @@ impl Kind {
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::MiraBoxHSV293S => 15 + 3,
             Kind::Akp815 => 15,
             Kind::Akp03R => 6 + 3,
+            Kind::MiraBoxM18 => 15 + 3,
         }
     }
 
@@ -191,6 +207,7 @@ impl Kind {
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::MiraBoxHSV293S => 3,
             Kind::Akp815 => 5,
             Kind::Akp03R => 3,
+            Kind::MiraBoxM18 => 3,
         }
     }
 
@@ -205,6 +222,7 @@ impl Kind {
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::MiraBoxHSV293S => 6,
             Kind::Akp815 => 3,
             Kind::Akp03R => 3,
+            Kind::MiraBoxM18 => 5,
         }
     }
 
@@ -232,6 +250,7 @@ impl Kind {
             Kind::Neo => Some((248, 58)),
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::MiraBoxHSV293S => Some((854, 480)),
             Kind::Akp815 => Some((800, 480)),
+            // Kind::MiraBoxM18 => Some((480, 272)), // Currently unsupported by fn set_logo_image (hardcoded 854x480)
             _ => None,
         }
     }
@@ -305,6 +324,13 @@ impl Kind {
                 size: (60, 60),
                 rotation: ImageRotation::Rot0,
                 mirror: ImageMirroring::None,
+            },
+
+            Kind::MiraBoxM18 => ImageFormat {
+                mode: ImageMode::JPEG,
+                size: (64, 64),
+                rotation: ImageRotation::Rot180,
+                mirror: ImageMirroring::Both,
             },
         }
     }

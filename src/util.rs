@@ -77,6 +77,15 @@ pub fn extract_str(bytes: &[u8]) -> Result<String, Utf8Error> {
  | 03 | 02 | 01 |
   --------------
 
+ MiraBoxM18's key index
+--------------------------
+| 01 | 02 | 03 | 04 | 05 |
+|----|----|----|----|----|
+| 06 | 07 | 08 | 09 | 10 |
+|----|----|----|----|----|
+| 11 | 12 | 13 | 14 | 15 |
+|----|----|----|----|----|
+|      37 | 48 | 49      |
 */
 
 /// Converts Elgato key index to Ajazz key index
@@ -92,8 +101,22 @@ pub fn elgato_to_ajazz153(kind: &Kind, key: u8) -> u8 {
 pub fn ajazz153_to_elgato_input(kind: &Kind, key: u8) -> u8 {
     if key < kind.key_count() {
         [4, 10, 16, 3, 9, 15, 2, 8, 14, 1, 7, 13, 0, 6, 12, 5, 11, 17][key as usize]
-    } else {
+            } else {
+                key
+    }
+}
+
+/// Converts MiraBoxM18 key index to Elgato key index
+pub fn miraboxm18_to_elgato_input(_kind: &Kind, key: u8) -> u8 {
+    if key < 15 {
         key
+    } else {
+        match key {
+            36 => 15,
+            47 => 16,
+            48 => 17,
+            _ => key,
+        }
     }
 }
 
@@ -112,10 +135,18 @@ pub fn flip_key_index(kind: &Kind, key: u8) -> u8 {
     (key - col) + ((kind.column_count() - 1) - col)
 }
 
+/// Flips key index vertically, reverses rows top to bottom. for MiraBoxM18
+pub fn flip_key_index_vertical(kind: &Kind, key: u8) -> u8 {
+    let col = key % kind.column_count();
+    let row = key / kind.column_count();
+    let new_row = (kind.row_count() - 1) - row;
+    (new_row * kind.column_count()) + col
+}
+
 /// Extends buffer up to required packet length
 pub fn ajazz_extend_packet(kind: &Kind, buf: &mut Vec<u8>) {
     let length = match kind {
-        Kind::Akp03R => 1025,
+        Kind::Akp03R | Kind::MiraBoxM18 => 1025,
         _ => 513,
     };
 
@@ -129,7 +160,7 @@ pub fn read_button_states(kind: &Kind, states: &[u8]) -> Vec<bool> {
     }
 
     match kind {
-        Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+        Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
             let mut bools = vec![];
 
             for i in 0..kind.key_count() {

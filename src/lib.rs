@@ -23,7 +23,7 @@ use image::{DynamicImage, ImageError};
 
 use crate::info::{is_vendor_familiar, Kind};
 use crate::util::{
-    ajazz03_read_input, ajazz_extend_packet, ajazz153_to_elgato_input, elgato_to_ajazz153, extract_str, flip_key_index, get_feature_report, inverse_key_index, read_button_states, read_data,
+    ajazz03_read_input, ajazz_extend_packet, ajazz153_to_elgato_input, miraboxm18_to_elgato_input, elgato_to_ajazz153, extract_str, flip_key_index, flip_key_index_vertical, get_feature_report, inverse_key_index, read_button_states, read_data,
     read_encoder_input, read_lcd_input, send_feature_report, write_data,
 };
 
@@ -160,7 +160,7 @@ impl StreamDeck {
     /// Returns serial number of the device
     pub fn serial_number(&self) -> Result<String, StreamDeckError> {
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let serial = self.device.get_serial_number_string()?;
                 match serial {
                     Some(serial) => {
@@ -200,7 +200,7 @@ impl StreamDeck {
                 Ok(extract_str(&bytes[5..])?)
             }
 
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let bytes = get_feature_report(&self.device, 0x01, 20)?;
                 Ok(extract_str(&bytes[0..])?)
             }
@@ -219,7 +219,7 @@ impl StreamDeck {
         }
         self.initialized.store(true, Ordering::Release);
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x44, 0x49, 0x53];
                 ajazz_extend_packet(&self.kind, &mut buf);
                 write_data(&self.device, buf.as_slice())?;
@@ -256,11 +256,24 @@ impl StreamDeck {
                 }
             }
 
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let data = read_data(&self.device, 512, timeout)?;
 
                 if data[0] == 0 {
                     return Ok(StreamDeckInput::NoData);
+                }
+
+                if self.kind == Kind::MiraBoxM18 {
+                    let mut states = vec![0x01];
+                    states.extend(vec![0u8; (self.kind.key_count() + 1) as usize]);
+                    
+                    // data[10] == 1 in data means the button is pressed
+                    if data[10] == 1 && data[9] != 0 {
+                        let key_index = miraboxm18_to_elgato_input(&self.kind, data[9] - 1);
+                        states[(key_index + 1) as usize] = 0x1u8;
+                    }
+                    
+                    return Ok(StreamDeckInput::ButtonStateChange(read_button_states(&self.kind, &states)));
                 }
 
                 let mut states = vec![0x01];
@@ -269,6 +282,8 @@ impl StreamDeck {
                 if data[9] != 0 {
                     let key = if self.kind == Kind::Akp815 {
                         inverse_key_index(&self.kind, data[9] - 1)
+                    } else if self.kind == Kind::MiraBoxM18 {
+                        miraboxm18_to_elgato_input(&self.kind, data[9] - 1)
                     } else {
                         ajazz153_to_elgato_input(&self.kind, data[9] - 1)
                     };
@@ -316,7 +331,7 @@ impl StreamDeck {
                 Ok(send_feature_report(&self.device, buf.as_slice())?)
             }
 
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 self.set_brightness(100)?;
                 self.clear_all_button_images()?;
                 Ok(())
@@ -346,7 +361,7 @@ impl StreamDeck {
                 Ok(send_feature_report(&self.device, buf.as_slice())?)
             }
 
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x4c, 0x49, 0x47, 0x00, 0x00, percent];
 
                 ajazz_extend_packet(&self.kind, &mut buf);
@@ -376,12 +391,19 @@ impl StreamDeck {
             return Ok(());
         }
 
+        // MiraBoxM18 has 18 keys, but only the first 15 have screens
+        if self.kind == Kind::MiraBoxM18 && key >= 15 {
+            return Ok(());
+        }
+
         let key = if let Kind::Original = self.kind {
             flip_key_index(&self.kind, key)
         } else if let Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::MiraBoxHSV293S = self.kind {
             elgato_to_ajazz153(&self.kind, key)
         } else if let Kind::Akp815 = self.kind {
             inverse_key_index(&self.kind, key)
+        } else if let Kind::MiraBoxM18 = self.kind {
+            flip_key_index_vertical(&self.kind, key)
         } else {
             key
         };
@@ -391,7 +413,7 @@ impl StreamDeck {
         }
 
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![
                     0x00,
                     0x43,
@@ -425,7 +447,7 @@ impl StreamDeck {
 
                 Kind::Mini | Kind::MiniMk2 => vec![0x02, 0x01, page_number as u8, 0, if last_package { 1 } else { 0 }, key + 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 
-                Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => vec![0x00],
+                Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => vec![0x00],
 
                 _ => vec![
                     0x02,
@@ -565,11 +587,13 @@ impl StreamDeck {
     pub fn clear_button_image(&self, key: u8) -> Result<(), StreamDeckError> {
         self.initialize()?;
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let key = if self.kind == Kind::Akp815 {
                     inverse_key_index(&self.kind, key)
                 } else if self.kind == Kind::Akp03R {
                     key
+                } else if self.kind == Kind::MiraBoxM18 {
+                    flip_key_index_vertical(&self.kind, key)
                 } else {
                     elgato_to_ajazz153(&self.kind, key)
                 };
@@ -593,10 +617,10 @@ impl StreamDeck {
         self.initialize()?;
         match self.kind {
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S => self.clear_button_image(0xff),
-            Kind::Akp03R => {
+            Kind::Akp03R | Kind::MiraBoxM18 => {
                 self.clear_button_image(0xFF)?;
 
-                // Akp03R requires STP to commit clearing the screen
+                // Akp03R/MiraBoxM18 requires STP to commit clearing the screen
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x53, 0x54, 0x50];
                 ajazz_extend_packet(&self.kind, &mut buf);
                 write_data(&self.device, buf.as_slice())?;
@@ -625,7 +649,7 @@ impl StreamDeck {
     pub fn set_logo_image(&self, image: DynamicImage) -> Result<(), StreamDeckError> {
         self.initialize()?;
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => (),
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => (),
             _ => return Err(StreamDeckError::UnsupportedOperation),
         }
 
@@ -700,14 +724,14 @@ impl StreamDeck {
 
         let image_report_length = match self.kind {
             Kind::Original => 8191,
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S => 513,
-            Kind::Akp03R => 1025,
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S=> 513,
+            Kind::Akp03R | Kind::MiraBoxM18 => 1025,
             _ => 1024,
         };
 
         let image_report_header_length = match self.kind {
             Kind::Original | Kind::Mini | Kind::MiniMk2 => 16,
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => 1,
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => 1,
             _ => 8,
         };
 
@@ -761,7 +785,7 @@ impl StreamDeck {
     pub fn sleep(&self) -> Result<(), StreamDeckError> {
         self.initialize()?;
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x48, 0x41, 0x4e];
 
                 ajazz_extend_packet(&self.kind, &mut buf);
@@ -779,7 +803,7 @@ impl StreamDeck {
     pub fn keep_alive(&self) -> Result<(), StreamDeckError> {
         self.initialize()?;
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x43, 0x4F, 0x4E, 0x4E, 0x45, 0x43, 0x54];
                 ajazz_extend_packet(&self.kind, &mut buf);
                 write_data(&self.device, buf.as_slice())?;
@@ -794,7 +818,7 @@ impl StreamDeck {
     pub fn shutdown(&self) -> Result<(), StreamDeckError> {
         self.initialize()?;
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x43, 0x4c, 0x45, 0x00, 0x00, 0x44, 0x43];
                 ajazz_extend_packet(&self.kind, &mut buf);
                 write_data(&self.device, buf.as_slice())?;
@@ -823,7 +847,7 @@ impl StreamDeck {
         }
 
         match self.kind {
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => {
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => {
                 let mut buf = vec![0x00, 0x43, 0x52, 0x54, 0x00, 0x00, 0x53, 0x54, 0x50];
 
                 ajazz_extend_packet(&self.kind, &mut buf);
@@ -894,13 +918,13 @@ impl WriteImageParameters {
         let image_report_length = match kind {
             Kind::Original => 8191,
             Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::MiraBoxHSV293S => 513,
-            Kind::Akp03R => 1025,
+            Kind::Akp03R | Kind::MiraBoxM18 => 1025,
             _ => 1024,
         };
 
         let image_report_header_length = match kind {
             Kind::Original | Kind::Mini | Kind::MiniMk2 => 16,
-            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S => 1,
+            Kind::Akp153 | Kind::Akp153E | Kind::Akp153R | Kind::Akp815 | Kind::Akp03R | Kind::MiraBoxHSV293S | Kind::MiraBoxM18 => 1,
             _ => 8,
         };
 
